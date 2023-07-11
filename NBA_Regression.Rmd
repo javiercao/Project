@@ -1,0 +1,220 @@
+---
+title: "NBA Project"
+author: "Javier Cao Cao"
+date: "03/07/2022"
+output: html_document
+---
+
+# Predicting the NBA Champions
+
+## Packages
+
+```{r, warning=FALSE}
+library(caret)
+library(pROC)
+library(tidyverse)
+library(fastDummies)
+library(dplyr)
+library(tidyr)
+library(datasets)
+library(class)
+library(mice)
+library(readxl)
+library(forecast)
+```
+
+## Dataset
+
+```{r}
+NBA_df <- read.csv("NBA.csv")
+#head(NBA_df)
+#names(NBA_df)
+```
+
+## Preprocessing
+
+```{r}
+# Delete Rank, Team name, year and minutes played
+NBA_df <- NBA_df[, -which(names(NBA_df) %in% 
+              c('ï..Rank', 'Team', 'Year', 'MP', 'O_MP'))]
+
+# Delete one of the dependent variables
+NBA_df <- NBA_df[, -which(names(NBA_df) %in% 
+              c('Champion'))]
+```
+
+```{r}
+# Correlation Matrix for Team Stats
+team_df <- NBA_df[, which(names(NBA_df) %in% 
+            c("FG", "FGA", "FG_perc", "X3P", "X3PA", "X3P_perc", "X2P", "X2PA",
+              "X2P_perc", "FT", "FTA", "FT_perc", "ORB", "DRB", "TRB", "AST", 
+              "STL", "BLK", "TOV", "PF", "PTS"))]
+
+team_cor <- cor(team_df)
+round(team_cor, 2)
+
+# Visualization
+library(corrplot)
+corrplot(team_cor, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+team_cor[abs(team_cor) > 0.75] <- NA
+team_cor
+```
+
+```{r}
+# Remove High Correlated Team Stats:
+NBA_df <- NBA_df[, -which(names(NBA_df) %in% 
+              c("FG", "X3P", "X2P", "X2PA", "X2P_perc", "FT"))]
+```
+
+```{r}
+# Correlation Matrix for Opposing Team Stats
+opp_df <- NBA_df[, which(names(NBA_df) %in% 
+            c("O_FG", "O_FGA", "O_FG_perc", "O_3P", "O_3PA", "O_3P_perc", "O_2P", "O_2PA",
+              "O_2P_perc", "O_FT", "O_FTA", "O_FT_perc", "O_ORB", "O_DRB", "O_TRB", "O_AST", 
+              "O_STL", "O_BLK", "O_TOV", "O_PF", "O_PTS"))]
+
+opp_cor <- cor(opp_df)
+round(opp_cor, 2)
+
+# Visualization
+library(corrplot)
+corrplot(opp_cor, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+opp_cor[abs(opp_cor) > 0.75] <- NA
+opp_cor
+```
+
+```{r}
+# Remove High Correlated Opposing Team Stats:
+NBA_df <- NBA_df[, -which(names(NBA_df) %in% 
+              c("O_FG", "O_3P", "O_2PA", "O_2P_perc", "O_FT", "O_TRB"))]
+```
+
+```{r}
+# Correlation Matrix for Advance Team Stats
+adv_df <- NBA_df[, which(names(NBA_df) %in% 
+            c( "W", "L" , "PW", "PL", "MOV", "SOS", "SRS", "ORtg", "DRtg",       
+               "Pace", "FTr", "X3PAr", "eFG_perc", "TOV_perc", "ORB_perc", 
+               "FT.FGA", "eFG_perc_1", "TOV_perc_2", "DRB_perc", "FT.FGA_3", 
+               "Attendance"))]
+
+adv_cor <- cor(adv_df)
+round(adv_cor, 2)
+
+# Visualization
+library(corrplot)
+corrplot(adv_cor, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+adv_cor[abs(adv_cor) > 0.9] <- NA
+adv_cor
+```
+```{r}
+# Remove High Correlated Advanced Team Stats:
+NBA_df <- NBA_df[, -which(names(NBA_df) %in% 
+              c("L", "PW", "PL"))]
+```
+
+## Features Selection
+
+```{r}
+# Regression with all variables
+NBA_reg <- lm(Playoff.Wins ~ ., NBA_df)
+summary(NBA_reg)
+```
+
+```{r, results='hide'}
+# Forward Selection
+NBA_lm_null <- lm(Playoff.Wins ~ 1, NBA_df)
+NBA_FS <- step(NBA_lm_null, scope=list(lower=NBA_lm_null, upper=NBA_reg), direction = "forward")
+```
+
+```{r, results='hide'}
+# Backward Selection
+NBA_BS <- step(NBA_reg, direction = "backward")
+```
+
+```{r, results='hide'}
+# Stepwise Selection
+NBA_Both <- step(NBA_reg, direction = "both")
+```
+
+```{r}
+# Results
+## Forward
+summary(NBA_FS)
+## Backward 
+summary(NBA_BS)
+## Both
+summary(NBA_Both)
+```
+
+## Predictive Model
+
+```{r}
+# Training set
+train.df <- NBA_df
+```
+
+```{r}
+# Testing Set
+test.df <- read.csv("NBA2021-2022.csv")
+
+row.names(test.df) <- test.df$Team
+test.df <- test.df[, -which(names(test.df) %in% 
+              c('ï..Rank', 'Year', 'MP', 'O_MP', 'Champion',
+               "FG", "X3P", "X2P", "X2PA", "X2P_perc", "FT", 
+               "O_FG", "O_3P", "O_2PA", "O_2P_perc", "O_FT", "O_TRB",
+               "L", "PW", "PL"))]
+#write.csv(test.df,"test.csv", row.names = FALSE)
+```
+
+### FS Model
+
+```{r}
+## Train Model 1
+NBA_lm_1 <- lm(formula = Playoff.Wins ~ W + SOS + TOV_perc + O_BLK + Attendance, data = train.df)
+```
+
+```{r}
+# Cross-Validation Model 1
+# Define training control
+train.control <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+# Train the model
+model_1 <- train(Playoff.Wins ~ W + SOS + TOV_perc + O_BLK + Attendance, data = train.df, method = "lm",
+               trControl = train.control)
+# Summarize the results
+print(model_1)
+```
+### Stepwise Model
+
+```{r}
+## Train Model 2
+NBA_lm_2 <- lm(formula = Playoff.Wins ~ TOV + PTS + O_BLK + W + SOS + eFG_perc + 
+    TOV_perc + FT.FGA + Attendance, data = train.df)
+```
+
+```{r}
+# Cross-Validation Model 2
+# Train the model
+model_2 <- train(Playoff.Wins ~ TOV + PTS + O_BLK + W + SOS + eFG_perc + 
+    TOV_perc + FT.FGA + Attendance, data = train.df, method = "lm",
+               trControl = train.control)
+# Summarize the results
+print(model_2)
+```
+
+```{r}
+## Test model 
+NBA_lm.pred.test_1 <- predict(NBA_lm_1, test.df)
+sort(NBA_lm.pred.test_1, decreasing = TRUE)
+```
+
+```{r}
+## Test model 2
+NBA_lm.pred.test_2 <- predict(NBA_lm_2, test.df)
+sort(NBA_lm.pred.test_2, decreasing = TRUE)
+```
